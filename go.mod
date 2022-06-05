@@ -1,4 +1,4 @@
-module celery-exporter
+module github.com/mdomans/celery-go-exporter
 
 go 1.17
 
