@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	cache "github.com/jfarleyx/go-simple-cache"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -11,18 +12,16 @@ import (
 	"time"
 )
 
-// utils
-
-func IfThenElse(condition bool, a float64, b float64) float64 {
-	if condition {
-		return a
-	}
-	return b
-}
-
-//
-
-const namespace = "celery"
+var taskBrokerURI = flag.String(
+	"taskBrokerURI",
+	"amqp://guest:guest@127.0.0.1:5672/muckrack",
+	"task broker URL",
+)
+var addr = flag.String(
+	"addr",
+	":9101",
+	"addr to listen on",
+)
 
 var celeryTaskUUIDNameCache = cache.New(10 * time.Minute)
 
@@ -70,31 +69,11 @@ var celeryTaskRuntimeSummary = prometheus.NewSummaryVec(
 
 type CeleryMetricsExporter struct {
 	taskBrokerURI string
-	up            *prometheus.Desc
-	workersMap    map[string]string
 }
 
 func NewCeleryMetricsExporter(taskBrokerURI string) *CeleryMetricsExporter {
 	return &CeleryMetricsExporter{
 		taskBrokerURI: taskBrokerURI,
-		up: prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, "", "up"),
-			"Is the worker up.", []string{"host"}, nil,
-		),
-		workersMap: make(map[string]string),
-	}
-}
-
-func (e *CeleryMetricsExporter) Describe(ch chan<- *prometheus.Desc) {
-	log.Printf("describing metrics")
-	ch <- e.up
-}
-func (e *CeleryMetricsExporter) Collect(ch chan<- prometheus.Metric) {
-	log.Printf("collecting metrics")
-	for k, v := range e.workersMap {
-		ch <- prometheus.MustNewConstMetric(
-			e.up, prometheus.GaugeValue, IfThenElse(v == "worker-online", 1, 0), k,
-		)
 	}
 }
 
@@ -113,12 +92,7 @@ func (e *CeleryMetricsExporter) HandleBrokerListening() {
 		select {
 		case ev := <-TaskQueueMgr.Monitor.EventsChannel:
 			if ev != nil {
-				if x, ok := ev.(*celeriac.WorkerEvent); ok {
-					log.Printf("Celery Event Channel: Worker event - %s [Hostname]: %s", x.Type, x.Hostname)
-					// handle up/down event
-					e.workersMap[x.Hostname] = x.Type
-
-				} else if x, ok := ev.(*celeriac.TaskEvent); ok {
+				if x, ok := ev.(*celeriac.TaskEvent); ok {
 					log.Printf("Celery Event Channel: Task event - [ID]: %s, %s", x.UUID, x.Type)
 					if x.Type == "task-started" {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
@@ -150,14 +124,14 @@ func (e *CeleryMetricsExporter) HandleBrokerListening() {
 func main() {
 	log.SetPrefix("SERVER: ")
 	log.SetFlags(0)
+	flag.Parse()
 	http.Handle("/metrics", promhttp.Handler())
-	exporter := NewCeleryMetricsExporter("amqp://guest:guest@127.0.0.1:5672/muckrack")
+	exporter := NewCeleryMetricsExporter(*taskBrokerURI)
 	go exporter.HandleBrokerListening()
-	prometheus.MustRegister(exporter)
 	prometheus.MustRegister(celeryTaskReceived)
 	prometheus.MustRegister(celeryTaskStarted)
 	prometheus.MustRegister(celeryTaskSucceeded)
 	prometheus.MustRegister(celeryTaskRuntime)
 	prometheus.MustRegister(celeryTaskRuntimeSummary)
-	log.Fatal(http.ListenAndServe(":9101", nil))
+	log.Fatal(http.ListenAndServe(*addr, nil))
 }
