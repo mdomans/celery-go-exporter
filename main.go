@@ -5,88 +5,112 @@ import (
 	cache "github.com/jfarleyx/go-simple-cache"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/svcavallar/celeriac.v1"
+	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 	"log"
 	"net/http"
 	"os"
 	"time"
 )
 
-var taskBrokerURI = flag.String(
-	"taskBrokerURI",
-	"amqp://guest:guest@127.0.0.1:5672/muckrack",
-	"task broker URL",
-)
-var addr = flag.String(
-	"addr",
-	":9101",
-	"addr to listen on",
-)
+var (
+	// Settings
+	taskBrokerURI = flag.String(
+		"taskBrokerURI",
+		"amqp://guest:guest@127.0.0.1:5672/test-vhost",
+		"task broker URL",
+	)
 
-var celeryTaskUUIDNameCache = cache.New(10 * time.Minute)
-
-var celeryTaskStarted = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "celery_task_started",
-		Help: "Number of started celery tasks.",
-	},
-	[]string{"name", "hostname"},
-)
-
-var celeryTaskReceived = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "celery_task_received",
-		Help: "Number of started celery tasks.",
-	},
-	[]string{"name", "hostname"},
-)
-
-var celeryTaskSucceeded = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "celery_task_succeeded",
-		Help: "Number of succeeded celery tasks.",
-	},
-	[]string{"name", "hostname"},
-)
-
-var celeryTaskRuntime = prometheus.NewHistogramVec(
-	prometheus.HistogramOpts{
-		Name:    "celery_task_runtime",
-		Help:    "Histogram of task runtime measurements.",
-		Buckets: prometheus.LinearBuckets(0.05, 0.10, 50),
-	},
-	[]string{"name", "hostname"},
-)
-
-var celeryTaskRuntimeSummary = prometheus.NewSummaryVec(
-	prometheus.SummaryOpts{
-		Name:       "celery_task_runtime_summary",
-		Help:       "Summary of task runtime measurements.",
-		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.95: 0.005, 0.99: 0.001},
-	},
-	[]string{"name"},
-)
-
-type CeleryMetricsExporter struct {
-	taskBrokerURI string
-}
-
-func NewCeleryMetricsExporter(taskBrokerURI string) *CeleryMetricsExporter {
-	return &CeleryMetricsExporter{
-		taskBrokerURI: taskBrokerURI,
+	addr = flag.String(
+		"addr",
+		":9808",
+		"addr to listen on",
+	)
+	// Metric collectors
+	celeryTaskReceived = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "celery_task_received",
+			Help: "Number of started celery tasks.",
+		},
+		[]string{"name", "hostname"},
+	)
+	celeryTaskStarted = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "celery_task_started",
+			Help: "Number of started celery tasks.",
+		},
+		[]string{"name", "hostname"},
+	)
+	celeryTaskSucceeded = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "celery_task_succeeded",
+			Help: "Number of succeeded celery tasks.",
+		},
+		[]string{"name", "hostname"},
+	)
+	unseccesfulTaskMetrics = map[string]*prometheus.CounterVec{
+		"task-failed": prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "celery_task_failed",
+				Help: "Number of succeeded celery tasks.",
+			},
+			[]string{"name", "hostname"},
+		),
+		"task-rejected": prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "celery_task_rejected",
+				Help: "Number of succeeded celery tasks.",
+			},
+			[]string{"name", "hostname"},
+		),
+		"task-revoked": prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "celery_task_revoked",
+				Help: "Number of succeeded celery tasks.",
+			},
+			[]string{"name", "hostname"},
+		),
+		"task-retried": prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "celery_task_retried",
+				Help: "Number of succeeded celery tasks.",
+			},
+			[]string{"name", "hostname"},
+		),
 	}
-}
 
-func (e *CeleryMetricsExporter) HandleBrokerListening() {
+	celeryTaskRuntime = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "celery_task_runtime",
+			Help:    "Histogram of task runtime measurements.",
+			Buckets: prometheus.LinearBuckets(0.05, 0.10, 50),
+		},
+		[]string{"name", "hostname"},
+	)
+	celeryTaskRuntimeSummary = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
+			Name:       "celery_task_runtime_summary",
+			Help:       "Summary of task runtime measurements.",
+			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.95: 0.005, 0.99: 0.001},
+		},
+		[]string{"name"},
+	)
+	// Cache for task data. Celery doesn't pass reliably all task data in each event - e.g. name isn't provided in
+	// task-started but is provided in task-received. In Python Celery State object is used to fix this, here I use
+	// far simpler and more performant cache since I need only specific information.
+	celeryTaskUUIDNameCache = cache.New(10 * time.Minute)
+)
+
+func handleBrokerListening() {
 
 	// Connect to RabbitMQ task queue
-	TaskQueueMgr, err := celeriac.NewTaskQueueMgr(e.taskBrokerURI)
+	TaskQueueMgr, err := celeriac.NewTaskQueueMgr(*taskBrokerURI)
 	if err != nil {
 		log.Printf("Failed to connect to task queue: %v", err)
 		os.Exit(-1)
 	}
 
-	log.Printf("Service connected to task queue - (URL: %s)", e.taskBrokerURI)
+	log.Printf("Service connected to task queue - (URL: %s)", *taskBrokerURI)
 
 	for {
 		select {
@@ -110,9 +134,14 @@ func (e *CeleryMetricsExporter) HandleBrokerListening() {
 							celeryTaskRuntime.WithLabelValues(taskName.(string), x.Hostname).Observe(float64(x.Runtime))
 							celeryTaskRuntimeSummary.WithLabelValues(taskName.(string)).Observe(float64(x.Runtime))
 						}
+					} else if slices.Contains(maps.Keys(unseccesfulTaskMetrics), x.Type) {
+						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
+						if found {
+							unseccesfulTaskMetrics[x.Type].WithLabelValues(taskName.(string), x.Hostname).Inc()
+						}
 					}
 				} else if x, ok := ev.(*celeriac.Event); ok {
-					log.Printf("Celery Event Channel: General event - %s [Hostname]: %s - [Data]: %v", x.Type, x.Hostname, x.Data)
+					log.Printf("Celery Event Channel: General event - %s [Hostname]: %s", x.Type, x.Hostname)
 				} else {
 					log.Printf("Celery Event Channel: Unhandled event: %v", ev)
 				}
@@ -126,11 +155,13 @@ func main() {
 	log.SetFlags(0)
 	flag.Parse()
 	http.Handle("/metrics", promhttp.Handler())
-	exporter := NewCeleryMetricsExporter(*taskBrokerURI)
-	go exporter.HandleBrokerListening()
+	go handleBrokerListening()
 	prometheus.MustRegister(celeryTaskReceived)
 	prometheus.MustRegister(celeryTaskStarted)
 	prometheus.MustRegister(celeryTaskSucceeded)
+	for _, metric := range unseccesfulTaskMetrics {
+		prometheus.MustRegister(metric)
+	}
 	prometheus.MustRegister(celeryTaskRuntime)
 	prometheus.MustRegister(celeryTaskRuntimeSummary)
 	log.Fatal(http.ListenAndServe(*addr, nil))
