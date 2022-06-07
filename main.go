@@ -49,7 +49,7 @@ var (
 		},
 		[]string{"name", "hostname"},
 	)
-	unseccesfulTaskMetrics = map[string]*prometheus.CounterVec{
+	unsuccessfulTaskMetrics = map[string]*prometheus.CounterVec{
 		"task-failed": prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "celery_task_failed",
@@ -135,10 +135,10 @@ func handleBrokerListening() {
 							celeryTaskRuntime.WithLabelValues(taskName.(string), x.Hostname).Observe(float64(x.Runtime))
 							celeryTaskRuntimeSummary.WithLabelValues(taskName.(string)).Observe(float64(x.Runtime))
 						}
-					} else if slices.Contains(maps.Keys(unseccesfulTaskMetrics), x.Type) {
+					} else if slices.Contains(maps.Keys(unsuccessfulTaskMetrics), x.Type) {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
 						if found {
-							unseccesfulTaskMetrics[x.Type].WithLabelValues(taskName.(string), x.Hostname).Inc()
+							unsuccessfulTaskMetrics[x.Type].WithLabelValues(taskName.(string), x.Hostname).Inc()
 						}
 					}
 				} else if x, ok := ev.(*celeriac.Event); ok {
@@ -160,7 +160,7 @@ func main() {
 	prometheus.MustRegister(celeryTaskReceived)
 	prometheus.MustRegister(celeryTaskStarted)
 	prometheus.MustRegister(celeryTaskSucceeded)
-	for _, metric := range unseccesfulTaskMetrics {
+	for _, metric := range unsuccessfulTaskMetrics {
 		prometheus.MustRegister(metric)
 	}
 	prometheus.MustRegister(celeryTaskRuntime)
