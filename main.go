@@ -5,6 +5,7 @@ import (
 	cache "github.com/jfarleyx/go-simple-cache"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/svcavallar/celeriac.v1"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"log"

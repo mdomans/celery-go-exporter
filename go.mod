@@ -6,6 +6,7 @@ require (
 	github.com/jfarleyx/go-simple-cache v1.1.0
 	github.com/prometheus/client_golang v1.12.2
 	github.com/svcavallar/celeriac.v1 v0.0.0-20201016044335-688a65173b7d
+	golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f
 )
 
 require (
@@ -21,7 +22,6 @@ require (
 	github.com/prometheus/procfs v0.7.3 // indirect
 	github.com/sirupsen/logrus v1.6.0 // indirect
 	github.com/streadway/amqp v0.0.0-20190827072141-edfb9018d271 // indirect
-	golang.org/x/exp v0.0.0-20220602145555-4a0574d9293f // indirect
 	golang.org/x/sys v0.0.0-20220114195835-da31bd327af9 // indirect
 	google.golang.org/protobuf v1.26.0 // indirect
 )
