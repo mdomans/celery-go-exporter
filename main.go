@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	cache "github.com/jfarleyx/go-simple-cache"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -14,19 +13,24 @@ import (
 	"time"
 )
 
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
 var (
 	// Settings
-	taskBrokerURI = flag.String(
-		"taskBrokerURI",
+	taskBrokerURL = getEnv(
+		"BROKER_URL",
 		"amqp://guest:guest@127.0.0.1:5672/test-vhost",
-		"task broker URL",
-	)
+	) // broker URL,
 
-	addr = flag.String(
-		"addr",
+	addr = getEnv(
+		"ADDR",
 		":9808",
-		"addr to listen on",
-	)
+	) // addr to listen on
 	// Metric collectors
 	celeryTaskReceived = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -105,13 +109,13 @@ var (
 func handleBrokerListening() {
 
 	// Connect to RabbitMQ task queue
-	TaskQueueMgr, err := celeriac.NewTaskQueueMgr(*taskBrokerURI)
+	TaskQueueMgr, err := celeriac.NewTaskQueueMgr(taskBrokerURL)
 	if err != nil {
 		log.Printf("Failed to connect to task queue: %v", err)
 		os.Exit(-1)
 	}
 
-	log.Printf("Service connected to task queue - (URL: %s)", *taskBrokerURI)
+	log.Printf("Service connected to task queue - (URL: %s)", taskBrokerURL)
 
 	for {
 		select {
@@ -154,7 +158,6 @@ func handleBrokerListening() {
 func main() {
 	log.SetPrefix("SERVER: ")
 	log.SetFlags(0)
-	flag.Parse()
 	http.Handle("/metrics", promhttp.Handler())
 	go handleBrokerListening()
 	prometheus.MustRegister(celeryTaskReceived)
@@ -165,5 +168,5 @@ func main() {
 	}
 	prometheus.MustRegister(celeryTaskRuntime)
 	prometheus.MustRegister(celeryTaskRuntimeSummary)
-	log.Fatal(http.ListenAndServe(*addr, nil))
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
