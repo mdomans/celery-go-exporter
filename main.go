@@ -20,6 +20,12 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+const (
+	Started   string = "task-started"
+	Received         = "task-received"
+	Succeeded        = "task-succeeded"
+)
+
 var (
 	// Settings
 	taskBrokerURL = getEnv(
@@ -123,15 +129,15 @@ func handleBrokerListening() {
 			if ev != nil {
 				if x, ok := ev.(*celeriac.TaskEvent); ok {
 					log.Printf("Celery Event Channel: Task event - [ID]: %s, %s", x.UUID, x.Type)
-					if x.Type == "task-started" {
+					if x.Type == Started {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
 						if found {
 							celeryTaskStarted.WithLabelValues(taskName.(string), x.Hostname).Inc()
 						}
-					} else if x.Type == "task-received" {
+					} else if x.Type == Received {
 						celeryTaskUUIDNameCache.Set(x.UUID, x.Name)
 						celeryTaskReceived.WithLabelValues(x.Name, x.Hostname).Inc()
-					} else if x.Type == "task-succeeded" {
+					} else if x.Type == Succeeded {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
 						if found {
 							celeryTaskSucceeded.WithLabelValues(taskName.(string), x.Hostname).Inc()
