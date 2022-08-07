@@ -1,13 +1,14 @@
 package main
 
 import (
+	"flag"
 	cache "github.com/jfarleyx/go-simple-cache"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	log "github.com/sirupsen/logrus"
 	"github.com/svcavallar/celeriac.v1"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -117,18 +118,18 @@ func handleBrokerListening() {
 	// Connect to RabbitMQ task queue
 	TaskQueueMgr, err := celeriac.NewTaskQueueMgr(taskBrokerURL)
 	if err != nil {
-		log.Printf("Failed to connect to task queue: %v", err)
+		log.Errorf("Failed to connect to task queue: %v", err)
 		os.Exit(-1)
 	}
 
-	log.Printf("Service connected to task queue - (URL: %s)", taskBrokerURL)
+	log.Infof("Service connected to task queue - (URL: %s)", taskBrokerURL)
 
 	for {
 		select {
 		case ev := <-TaskQueueMgr.Monitor.EventsChannel:
 			if ev != nil {
 				if x, ok := ev.(*celeriac.TaskEvent); ok {
-					log.Printf("Celery Event Channel: Task event - [ID]: %s, %s", x.UUID, x.Type)
+					log.WithFields(log.Fields{"UUID": x.UUID, "type": x.Type}).Info("Received event")
 					if x.Type == Started {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
 						if found {
@@ -141,7 +142,7 @@ func handleBrokerListening() {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
 						if found {
 							celeryTaskSucceeded.WithLabelValues(taskName.(string), x.Hostname).Inc()
-							log.Printf("Observing task runtime: %f", float64(x.Runtime))
+							log.WithFields(log.Fields{"UUID": x.UUID, "type": x.Type}).Debugf("Observing task runtime: %f", float64(x.Runtime))
 							celeryTaskRuntime.WithLabelValues(taskName.(string), x.Hostname).Observe(float64(x.Runtime))
 							celeryTaskRuntimeSummary.WithLabelValues(taskName.(string)).Observe(float64(x.Runtime))
 						}
@@ -152,9 +153,9 @@ func handleBrokerListening() {
 						}
 					}
 				} else if x, ok := ev.(*celeriac.Event); ok {
-					log.Printf("Celery Event Channel: General event - %s [Hostname]: %s", x.Type, x.Hostname)
+					log.WithFields(log.Fields{"type": x.Type}).Info("Celery Event Channel: General event")
 				} else {
-					log.Printf("Celery Event Channel: Unhandled event: %v", ev)
+					log.WithFields(log.Fields{"type": x.Type}).Info("Celery Event Channel: Unhandled event")
 				}
 			}
 		}
@@ -162,8 +163,17 @@ func handleBrokerListening() {
 }
 
 func main() {
-	log.SetPrefix("SERVER: ")
-	log.SetFlags(0)
+	verbose := flag.Bool("v", false, "Log verbose info, by default logs only Warn and more severe.")
+	flag.Parse()
+	if *verbose {
+		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.WarnLevel)
+	}
+	log.SetFormatter(&log.TextFormatter{
+		DisableColors: false,
+		FullTimestamp: true,
+	})
 	http.Handle("/metrics", promhttp.Handler())
 	go handleBrokerListening()
 	prometheus.MustRegister(celeryTaskReceived)
