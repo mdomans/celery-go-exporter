@@ -149,13 +149,19 @@ func handleBrokerListening() {
 					} else if slices.Contains(maps.Keys(unsuccessfulTaskMetrics), x.Type) {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
 						if found {
-							unsuccessfulTaskMetrics[x.Type].WithLabelValues(taskName.(string), x.Hostname).Inc()
+							metric, exists := unsuccessfulTaskMetrics[x.Type]
+							if exists {
+								metric.WithLabelValues(taskName.(string), x.Hostname).Inc()
+							} else {
+								log.Error("Missing metric for event type")
+							}
+
 						}
 					}
-				} else if x, ok := ev.(*celeriac.Event); ok {
-					log.WithFields(log.Fields{"type": x.Type}).Info("Celery Event Channel: General event")
+				} else if _, ok := ev.(*celeriac.Event); ok {
+					log.Info("Celery Event Channel: General event")
 				} else {
-					log.WithFields(log.Fields{"type": x.Type}).Info("Celery Event Channel: Unhandled event")
+					log.Info("Celery Event Channel: Unhandled event")
 				}
 			}
 		}
@@ -168,7 +174,7 @@ func main() {
 	if *verbose {
 		log.SetLevel(log.DebugLevel)
 	} else {
-		log.SetLevel(log.WarnLevel)
+		log.SetLevel(log.ErrorLevel)
 	}
 	log.SetFormatter(&log.TextFormatter{
 		DisableColors: false,
