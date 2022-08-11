@@ -25,6 +25,10 @@ const (
 	Started   string = "task-started"
 	Received         = "task-received"
 	Succeeded        = "task-succeeded"
+	Failed           = "task-failed"
+	Retried          = "task-retried"
+	Revoked          = "task-revoked"
+	Rejected         = "task-rejected"
 )
 
 var (
@@ -61,28 +65,28 @@ var (
 		[]string{"name", "hostname"},
 	)
 	unsuccessfulTaskMetrics = map[string]*prometheus.CounterVec{
-		"task-failed": prometheus.NewCounterVec(
+		Failed: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "celery_task_failed",
 				Help: "Number of succeeded celery tasks.",
 			},
 			[]string{"name", "hostname"},
 		),
-		"task-rejected": prometheus.NewCounterVec(
+		Rejected: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "celery_task_rejected",
 				Help: "Number of succeeded celery tasks.",
 			},
-			[]string{"name", "hostname"},
+			[]string{"name"},
 		),
-		"task-revoked": prometheus.NewCounterVec(
+		Revoked: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "celery_task_revoked",
 				Help: "Number of succeeded celery tasks.",
 			},
-			[]string{"name", "hostname"},
+			[]string{"name"},
 		),
-		"task-retried": prometheus.NewCounterVec(
+		Retried: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "celery_task_retried",
 				Help: "Number of succeeded celery tasks.",
@@ -149,11 +153,12 @@ func handleBrokerListening() {
 					} else if slices.Contains(maps.Keys(unsuccessfulTaskMetrics), x.Type) {
 						taskName, found := celeryTaskUUIDNameCache.Get(x.UUID)
 						if found {
-							metric, exists := unsuccessfulTaskMetrics[x.Type]
-							if exists {
+							metric := unsuccessfulTaskMetrics[x.Type]
+							// for unsuccessful tasks only retried and failed have hostname val
+							if x.Type == Failed || x.Type == Retried {
 								metric.WithLabelValues(taskName.(string), x.Hostname).Inc()
 							} else {
-								log.Error("Missing metric for event type")
+								metric.WithLabelValues(taskName.(string)).Inc()
 							}
 
 						}
